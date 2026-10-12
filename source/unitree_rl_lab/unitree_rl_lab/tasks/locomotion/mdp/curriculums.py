@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import torch
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+from isaaclab.assets import Articulation
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.terrains import TerrainImporter
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+def lin_vel_cmd_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "track_lin_vel_xy",
+) -> torch.Tensor:
+    command_term = env.command_manager.get_term("base_velocity")
+    ranges = command_term.cfg.ranges
+    limit_ranges = command_term.cfg.limit_ranges
+
+    reward_term = env.reward_manager.get_term_cfg(reward_term_name)
+    reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+
+    if env.common_step_counter % env.max_episode_length == 0:
+        if reward > reward_term.weight * 0.8:
+            delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+            ranges.lin_vel_x = torch.clamp(
+                torch.tensor(ranges.lin_vel_x, device=env.device) + delta_command,
+                limit_ranges.lin_vel_x[0],
+                limit_ranges.lin_vel_x[1],
+            ).tolist()
+            ranges.lin_vel_y = torch.clamp(
+                torch.tensor(ranges.lin_vel_y, device=env.device) + delta_command,
+                limit_ranges.lin_vel_y[0],
+                limit_ranges.lin_vel_y[1],
+            ).tolist()
+
+    return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+
+
+def ang_vel_cmd_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str = "track_ang_vel_z",
+) -> torch.Tensor:
+    command_term = env.command_manager.get_term("base_velocity")
+    ranges = command_term.cfg.ranges
+    limit_ranges = command_term.cfg.limit_ranges
+
+    reward_term = env.reward_manager.get_term_cfg(reward_term_name)
+    reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+
+    if env.common_step_counter % env.max_episode_length == 0:
+        if reward > reward_term.weight * 0.8:
+            delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+            ranges.ang_vel_z = torch.clamp(
+                torch.tensor(ranges.ang_vel_z, device=env.device) + delta_command,
+                limit_ranges.ang_vel_z[0],
+                limit_ranges.ang_vel_z[1],
+            ).tolist()
+
+    return torch.tensor(ranges.ang_vel_z[1], device=env.device)
+
+
+def terrain_levels_vel_forward(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    forward_cmd_threshold: float = 0.3,
+    yaw_cmd_threshold: float = 0.5,
+    promote_ratio: float = 0.25,
+    demote_ratio: float = 0.5,
+) -> torch.Tensor:
+    """Curriculum based on the distance walked, gated to forward-dominant episodes only.
+
+    Unlike the upstream :func:`terrain_levels_vel`, which promotes/demotes based purely on
+    distance, this term only lets an episode participate in terrain promotion/demotion when
+    its command is "forward dominant": a meaningful linear-velocity magnitude (``|cmd_xy|``
+    above ``forward_cmd_threshold``) combined with a small yaw-rate command (``|ang_vel_z|``
+    below ``yaw_cmd_threshold``). Episodes that are mostly turning (``ang_vel_z`` up to +-1.0)
+    or standing still are treated as neutral: they neither promote nor demote.
+
+    This fixes a curriculum dead-lock where turning commands (which accumulate ~0 displacement
+    regardless of tracking quality) kept demoting well-tracked robots, pinning ``terrain_levels``
+    around 1.2-1.4 while the evaluation difficulty band sits at 0.4-0.9.
+
+    .. note::
+        It is only possible to use this term with the terrain type ``generator``.
+
+    Returns:
+        The mean terrain level across all environments (for logging).
+    """
+    # extract the used quantities (to enable type-hinting)
+    asset: Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+    command = env.command_manager.get_command("base_velocity")
+    # compute the distance the robot walked this episode
+    distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
+    # command magnitude split into planar (xy) linear and yaw (z) components
+    cmd_xy = torch.norm(command[env_ids, :2], dim=1)
+    cmd_yaw = torch.abs(command[env_ids, 2])
+    # only forward-dominant episodes participate in promotion/demotion
+    forward_mask = (cmd_xy > forward_cmd_threshold) & (cmd_yaw < yaw_cmd_threshold)
+    # robots that walked far enough progress to harder terrains (2m on an 8m patch)
+    move_up = forward_mask & (distance > terrain.cfg.terrain_generator.size[0] * promote_ratio)
+    # robots that walked less than the required fraction of their commanded distance demote
+    move_down = forward_mask & (distance < cmd_xy * env.max_episode_length_s * demote_ratio)
+    move_down = move_down & ~move_up
+    # update terrain levels
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    # return the mean terrain level
+    return torch.mean(terrain.terrain_levels.float())

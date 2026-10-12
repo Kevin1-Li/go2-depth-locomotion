@@ -1,0 +1,25 @@
+# Python / simulator outputs
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Training outputs and private machine paths
+runs/
+logs/
+outputs/
+results/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.jit
+*.torchscript
+*.npz
+*.mp4
+*.bag
+*.db
