@@ -23,8 +23,8 @@ Teacher 在仿真中使用特权地形信息训练；Student 使用部署阶段�
 ```text
 assets/go2_description/   Go2 URDF、xacro、网格与机器人描述文件
 doc/                      项目说明、训练记录与评测协议
- scripts/                 训练、蒸馏、回放和评测脚本
- source/unitree_rl_lab/   Isaac Lab 任务、配置与策略模型
+scripts/                 训练、蒸馏、回放和评测脚本
+source/unitree_rl_lab/   Isaac Lab 任务、配置与策略模型
 ```
 
 训练权重、TensorBoard 日志和原始评测输出未纳入仓库。个别机器人资源路径可能需要按本机目录调整；运行前请检查 `source/unitree_rl_lab/unitree_rl_lab/assets/robots/` 下的配置。
@@ -50,4 +50,5 @@ bash scripts/rsl_rl/run_lstm_ca_long.sh
 ## 上游项目与许可
 
 本项目基于 [Unitree RL Lab](https://github.com/unitreerobotics/unitree_rl_lab)。仓库中的上游代码及相关文件遵循其 Apache License 2.0，许可证文本见 [`LICENCE`](LICENCE)；请保留源文件中已有的版权与归属声明。第三方依赖、资源和本项目新增内容可能具有各自的许可或使用条件，使用前请核对对应声明。
+
 
